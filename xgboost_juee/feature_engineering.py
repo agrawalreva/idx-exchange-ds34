@@ -281,49 +281,46 @@ def compute_market_velocity_test(train_df, test_df, location_col="PostalCode", w
 # -----------------------------
 # Location-level medians & PPSF (leakage-safe)
 # -----------------------------
-def compute_location_medians_and_ppsf(train_df, test_df, location_cols=("PostalCode", "City", "CountyOrParish")):
-    """
-    For each location_col compute:
-      - median ClosePrice
-      - median price-per-sqft (PPSF)
-    All computed from TRAIN only, mapped to train/test; unseen entries in test get global median.
-    """
+def compute_location_medians_and_ppsf(train_df, test_df, location_cols):
     train = train_df.copy()
     test = test_df.copy()
-    global_price_median = train["ClosePrice"].median()
-    # compute PPSF in train
-    train["_PPSF_tmp"] = safe_divide(train["ClosePrice"], train["LivingArea"])
-    global_ppsf_median = train["_PPSF_tmp"].median()
+
+    # Temporary PPSF (for calculating medians)
+    train["_PPSF_tmp"] = train["ClosePrice"] / train["LivingArea"].replace(0, np.nan)
+    test["_PPSF_tmp"] = np.nan  # test doesn't have ClosePrice
 
     for col in location_cols:
-        if col not in train.columns:
-            # create filler with NaNs
-            train[f"{col}_MedianPrice"] = np.nan
-            test[f"{col}_MedianPrice"] = np.nan
-            train[f"{col}_MedianPPSF"] = np.nan
-            test[f"{col}_MedianPPSF"] = np.nan
-            continue
+        # ---- compute medians from TRAIN ONLY ----
+        median_price = train.groupby(col)["ClosePrice"].median()
+        median_ppsf = train.groupby(col)["_PPSF_tmp"].median()
 
-        price_map = train.groupby(col)["ClosePrice"].median()
-        ppsf_map = train.groupby(col)["_PPSF_tmp"].median()
+        # assign medians back
+        train[col + "_MedianPrice"] = train[col].map(median_price)
+        test[col + "_MedianPrice"] = test[col].map(median_price)
 
-        train[f"{col}_MedianPrice"] = train[col].map(price_map).fillna(global_price_median)
-        test[f"{col}_MedianPrice"] = test[col].map(price_map).fillna(global_price_median)
+        train[col + "_MedianPPSF"] = train[col].map(median_ppsf)
+        test[col + "_MedianPPSF"] = test[col].map(median_ppsf)
 
-        train[f"{col}_MedianPPSF"] = train[col].map(ppsf_map).fillna(global_ppsf_median)
-        test[f"{col}_MedianPPSF"] = test[col].map(ppsf_map).fillna(global_ppsf_median)
+        # ---- TRAIN ONLY: relative features (test has no ClosePrice) ----
+        train[col + "_RelPriceToMedian"] = train["ClosePrice"] / train[col + "_MedianPrice"]
+        test[col + "_RelPriceToMedian"] = np.nan  # avoid leakage
 
-        # relative features
-        train[f"{col}_RelPriceToMedian"] = safe_divide(train["ClosePrice"], train[f"{col}_MedianPrice"])
-        test[f"{col}_RelPriceToMedian"] = safe_divide(test.get("ClosePrice", np.nan), test[f"{col}_MedianPrice"])
+        train[col + "_RelPPSFToMedian"] = train["_PPSF_tmp"] / train[col + "_MedianPPSF"]
+        test[col + "_RelPPSFToMedian"] = np.nan
 
-        train[f"{col}_RelPPSFToMedian"] = safe_divide(train["_PPSF_tmp"], train[f"{col}_MedianPPSF"])
-        test[f"{col}_RelPPSFToMedian"] = safe_divide(test.get("_PPSF_tmp", np.nan), test[f"{col}_MedianPPSF"])
+    # Fill missing medians in test using global medians
+    global_price_med = train["ClosePrice"].median()
+    global_ppsf_med = train["_PPSF_tmp"].median()
 
-    # drop temp
-    train.drop(columns=["_PPSF_tmp"], inplace=True, errors="ignore")
-    test.drop(columns=["_PPSF_tmp"], inplace=True, errors="ignore")
+    for col in location_cols:
+        test[col + "_MedianPrice"].fillna(global_price_med, inplace=True)
+        test[col + "_MedianPPSF"].fillna(global_ppsf_med, inplace=True)
+
+    train.drop(columns="_PPSF_tmp", inplace=True)
+    test.drop(columns="_PPSF_tmp", inplace=True)
+
     return train, test
+
 
 
 # -----------------------------
