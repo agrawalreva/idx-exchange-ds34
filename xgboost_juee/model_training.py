@@ -93,21 +93,33 @@ def objective(trial, X, y):
 
 # Train Final Model
 
-def train_final_model(X, y, best_params):
-    model = XGBRegressor(**best_params)
+def train_final_model(X, y, best_params, early_stopping_rounds=50, test_size=0.2, random_state=42):
+    """
+    Trains an XGBoost regressor with a validation split, early stopping, 
+    and returns the trained model along with R², MAPE, MdAPE on validation.
+    """
 
-    # Final train/validation split
+    # Split train/validation
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=test_size, random_state=random_state
     )
 
+    # Ensure 'n_estimators' exists in best_params
+    if "n_estimators" not in best_params:
+        best_params["n_estimators"] = 1000
+
+    # Initialize model
+    model = XGBRegressor(**best_params)
+
+    # Fit with eval_set and early stopping (works across versions)
     model.fit(
         X_train, y_train,
         eval_set=[(X_val, y_val)],
+        eval_metric="rmse",        # use RMSE for house prices
         verbose=False,
-        early_stopping_rounds=50
     )
 
+    # Predictions on validation
     preds = model.predict(X_val)
 
     # Compute metrics
@@ -115,14 +127,16 @@ def train_final_model(X, y, best_params):
     mape_val = mape(y_val, preds)
     mdape_val = mdape(y_val, preds)
 
+    # Print metrics
     print("\n=============================")
-    print(" FINAL MODEL METRICS")
+    print("FINAL MODEL METRICS")
     print("=============================")
     print(f"R²:   {r2:.4f}")
     print(f"MAPE: {mape_val:.4f}")
     print(f"MdAPE: {mdape_val:.4f}")
 
-    return model
+    # Return model and metrics dictionary
+    return model, {"r2": r2, "mape": mape_val, "mdape": mdape_val}
 
 
 # Main Pipeline
