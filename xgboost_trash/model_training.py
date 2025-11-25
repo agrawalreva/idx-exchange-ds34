@@ -47,7 +47,7 @@ def load_data():
                      if col in train_sample.columns]
         
         train_cleaned, stats, mechs = cs.adaptive_clean_real_estate_data(pd.read_csv("combined_raw_data.csv", parse_dates=date_cols if date_cols else False), fit = True)
-        test_cleaned, _, _= cs.adaptive_clean_real_estate_data(pd.read_csv("testing_raw_data.csv", parse_dates=date_cols if date_cols else False), fit = False, stats = stats, mechs = mechs)
+        test_cleaned, _, _= cs.adaptive_clean_real_estate_data(pd.read_csv("testing_raw_data.csv", parse_dates=date_cols if date_cols else False), fit = False, imputation_stats = stats, missing_mechanisms=mechs, trim_outliers=True)
         
         print(f"  Train: {train_cleaned.shape}")
         print(f"  Test:  {test_cleaned.shape}")
