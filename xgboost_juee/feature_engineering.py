@@ -265,7 +265,7 @@ def build_features(train_cleaned, test_cleaned):
         "City", "PostalCode", "CountyOrParish",  # Have _TE versions
         "MonthStr",  # Temporary helper column
         "CloseDate", "ListingContractDate", "PurchaseContractDate",  # Date columns
-        "ContractStatusChangeDate"  # If it exists
+        "ContractStatusChangeDate", 'SourceFile', 'CoListOfficeName'  # If it exists
     ]
     
     # Only drop columns that exist

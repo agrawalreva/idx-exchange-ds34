@@ -91,7 +91,7 @@ def adaptive_clean_real_estate_data(
         'BuyerAgentLastName', 'BuyerAgentMlsId', 'ListOfficeName',
         'BuyerOfficeName', 'SubdivisionName', 'Levels', 'Flooring',
         'MLSAreaMajor', 'StreetNumberNumeric', 'MainLevelBedrooms',
-        'StateOrProvince', 'PropertyType', 'PropertySubType'
+        'StateOrProvince', 'PropertyType', 'PropertySubType', 'SourceFile', 'CoListOfficeName'
     ]
     cols_to_drop = [c for c in columns_to_exclude if c in df.columns]
     df = df.drop(columns=cols_to_drop)
