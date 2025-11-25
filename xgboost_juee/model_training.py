@@ -17,6 +17,8 @@ except ImportError:
     print("Make sure build_features() is defined in feature_engineering.py")
     sys.exit(1)
 
+import cleaning_script as cs
+
 
 # ===============================================
 # Custom Metrics
@@ -44,13 +46,13 @@ def load_data():
         date_cols = [col for col in ["CloseDate", "ListingContractDate", "PurchaseContractDate", "ContractStatusChangeDate"] 
                      if col in train_sample.columns]
         
-        train_raw = pd.read_csv("train_cleaned.csv", parse_dates=date_cols if date_cols else False)
-        test_raw = pd.read_csv("test_cleaned.csv", parse_dates=date_cols if date_cols else False)
+        train_cleaned, stats, mechs = cs.adaptive_clean_real_estate_data(pd.read_csv("combined_raw_data.csv", parse_dates=date_cols if date_cols else False), fit = True)
+        test_cleaned, _, _= cs.adaptive_clean_real_estate_data(pd.read_csv("testing_raw_data.csv", parse_dates=date_cols if date_cols else False), fit = False, stats = stats, mechs = mechs)
         
-        print(f"  Train: {train_raw.shape}")
-        print(f"  Test:  {test_raw.shape}")
+        print(f"  Train: {train_cleaned.shape}")
+        print(f"  Test:  {test_cleaned.shape}")
         
-        return train_raw, test_raw
+        return train_cleaned, test_cleaned
         
     except FileNotFoundError as e:
         print(f"ERROR: {e}")

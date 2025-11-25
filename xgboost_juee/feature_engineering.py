@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import KFold
 from sklearn.cluster import KMeans
+import cleaning_script as cs
 
 
 # --------------------------------------------------------
