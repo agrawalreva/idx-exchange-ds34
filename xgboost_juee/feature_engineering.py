@@ -9,7 +9,8 @@ from sklearn.cluster import KMeans
 # --------------------------------------------------------
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    R = 6371
+    """Calculate distance between two lat/lon points in kilometers"""
+    R = 6371  # Earth radius in km
     lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
     dlat = lat2 - lat1
     dlon = lon2 - lon1
@@ -18,10 +19,14 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 
 def kfold_target_encode(train_series, target, test_series, n_splits=5):
+    """
+    K-fold target encoding to prevent leakage.
+    Returns out-of-fold encoded training series and encoded test series.
+    """
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
     oof = pd.Series(np.nan, index=train_series.index)
-    test_encoded = pd.Series(np.zeros(len(test_series)))
+    test_encoded = pd.Series(np.zeros(len(test_series)), index=test_series.index)
 
     for train_idx, valid_idx in kf.split(train_series):
         tr, val = train_series.iloc[train_idx], train_series.iloc[valid_idx]
@@ -37,7 +42,7 @@ def kfold_target_encode(train_series, target, test_series, n_splits=5):
 
 
 # --------------------------------------------------------
-# Coastal points
+# Coastal Reference Points (Major California Coast Cities)
 # --------------------------------------------------------
 
 COAST_POINTS = [
@@ -54,6 +59,7 @@ COAST_POINTS = [
 ]
 
 def min_distance_to_coast(df, coast_points):
+    """Calculate minimum distance to any coastal point"""
     all_distances = []
     for lat_c, lon_c in coast_points:
         dist = haversine_distance(df["Latitude"], df["Longitude"], lat_c, lon_c)
@@ -62,74 +68,103 @@ def min_distance_to_coast(df, coast_points):
 
 
 # --------------------------------------------------------
-# MAIN PIPELINE
+# MAIN FEATURE ENGINEERING PIPELINE
 # --------------------------------------------------------
 
-def build_features(train_cleaned, test_clean):
-
-    # For KMeans clustering
-    full = pd.concat(
-        [train_cleaned.drop(columns=["ClosePrice"]), test_clean],
-        ignore_index=True
-    )
-
+def build_features(train_cleaned, test_cleaned):
+    """
+    Build features for real estate price prediction.
+    
+    Parameters:
+    -----------
+    train_cleaned : pd.DataFrame
+        Cleaned training data with ClosePrice
+    test_cleaned : pd.DataFrame
+        Cleaned test data with or without ClosePrice
+        
+    Returns:
+    --------
+    train_fe : pd.DataFrame
+        Training data with engineered features
+    test_fe : pd.DataFrame
+        Test data with engineered features
+    """
+    
+    # Work on copies to avoid modifying originals
+    train = train_cleaned.copy()
+    test = test_cleaned.copy()
+    
+    print("Building features...")
+    
     # --------------------------------------------------------
     # 1. DATE FEATURES
     # --------------------------------------------------------
-    for df in [train_cleaned, test_clean]:
+    print("  - Temporal features")
+    for df in [train, test]:
         df["CloseYear"] = df["CloseDate"].dt.year
         df["CloseMonth"] = df["CloseDate"].dt.month
         df["CloseQuarter"] = df["CloseDate"].dt.quarter
-
-        df["CloseSeason"] = df["CloseMonth"].map({
-            12: "Winter", 1: "Winter", 2: "Winter",
-            3: "Spring", 4: "Spring", 5: "Spring",
-            6: "Summer", 7: "Summer", 8: "Summer",
-            9: "Fall", 10: "Fall", 11: "Fall",
-        })
-
+        
+        # Encode season as numeric (0-3) instead of string
+        season_map = {
+            12: 0, 1: 0, 2: 0,      # Winter
+            3: 1, 4: 1, 5: 1,        # Spring
+            6: 2, 7: 2, 8: 2,        # Summer
+            9: 3, 10: 3, 11: 3,      # Fall
+        }
+        df["CloseSeason"] = df["CloseMonth"].map(season_map)
+        
+        # Time on market features
         df["DaysOnMarket"] = (df["CloseDate"] - df["ListingContractDate"]).dt.days
         df["TimeFromOfferToClose"] = (df["CloseDate"] - df["PurchaseContractDate"]).dt.days
         df["TimeFromListingToOffer"] = (df["PurchaseContractDate"] - df["ListingContractDate"]).dt.days
-
+        
+        # Handle negative values (data quality issues)
+        df["DaysOnMarket"] = df["DaysOnMarket"].clip(lower=0)
+        df["TimeFromOfferToClose"] = df["TimeFromOfferToClose"].clip(lower=0)
+        df["TimeFromListingToOffer"] = df["TimeFromListingToOffer"].clip(lower=0)
 
     # --------------------------------------------------------
     # 2. LOG TRANSFORMS & AGE BUCKETS
     # --------------------------------------------------------
-    for df in [train_cleaned, test_clean]:
+    print("  - Log transforms and age buckets")
+    for df in [train, test]:
         df["LogLivingArea"] = np.log1p(df["LivingArea"])
         df["LogLotSizeSF"] = np.log1p(df["LotSizeSquareFeet"])
-
-        df["AgeBucket"] = pd.cut(
-            df["PropertyAgeAtClose"],
-            bins=[-1, 5, 20, 50, 200],
-            labels=["0-5", "5-20", "20-50", "50+"],
-        )
+        
+        # Convert age bucket to numeric codes instead of categorical
+        df["AgeBucket_0_5"] = (df["PropertyAgeAtClose"] <= 5).astype(int)
+        df["AgeBucket_5_20"] = ((df["PropertyAgeAtClose"] > 5) & (df["PropertyAgeAtClose"] <= 20)).astype(int)
+        df["AgeBucket_20_50"] = ((df["PropertyAgeAtClose"] > 20) & (df["PropertyAgeAtClose"] <= 50)).astype(int)
+        df["AgeBucket_50plus"] = (df["PropertyAgeAtClose"] > 50).astype(int)
 
     # --------------------------------------------------------
     # 3. RATIO FEATURES
     # --------------------------------------------------------
+    print("  - Ratio features")
     def add_ratios(df):
-        df["LotSizeToLivingArea"] = df["LotSizeSquareFeet"] / df["LivingArea"]
-        df["BathsPerSqFt"] = df["BathroomsTotalInteger"] / df["LivingArea"]
-        df["BedsPerSqFt"] = df["BedroomsTotal"] / df["LivingArea"]
-        df["RoomsPerSqFt"] = (df["BedroomsTotal"] + df["BathroomsTotalInteger"]) / df["LivingArea"]
-        df["ParkingPerSqFt"] = df["ParkingTotal"] / df["LivingArea"]
-        df["GarageSpacesPerBedroom"] = df["GarageSpaces"] / df["BedroomsTotal"]
+        # Avoid division by zero
+        df["LotSizeToLivingArea"] = df["LotSizeSquareFeet"] / (df["LivingArea"] + 1)
+        df["BathsPerSqFt"] = df["BathroomsTotalInteger"] / (df["LivingArea"] + 1)
+        df["BedsPerSqFt"] = df["BedroomsTotal"] / (df["LivingArea"] + 1)
+        df["RoomsPerSqFt"] = (df["BedroomsTotal"] + df["BathroomsTotalInteger"]) / (df["LivingArea"] + 1)
+        df["ParkingPerSqFt"] = df["ParkingTotal"] / (df["LivingArea"] + 1)
+        df["GarageSpacesPerBedroom"] = df["GarageSpaces"] / (df["BedroomsTotal"] + 1)
         df["Lat_Long_Interaction"] = df["Latitude"] * df["Longitude"]
         df["IsSingleStory"] = (df["Stories"] == 1).astype(int)
         df["IsTwoStory"] = (df["Stories"] == 2).astype(int)
 
-    add_ratios(train_cleaned)
-    add_ratios(test_clean)
+    add_ratios(train)
+    add_ratios(test)
 
     # --------------------------------------------------------
     # 4. BOOLEAN INTERACTION FEATURES
     # --------------------------------------------------------
-    for df in [train_cleaned, test_clean]:
+    print("  - Boolean interactions")
+    for df in [train, test]:
         df["HasPoolWithView"] = (df["PoolPrivateYN"] & df["ViewYN"]).astype(int)
         df["HasGarageAndFireplace"] = (df["FireplaceYN"] & df["AttachedGarageYN"]).astype(int)
-
+        
         df["LuxuryAmenityScore"] = (
             df["PoolPrivateYN"].astype(int)
             + df["ViewYN"].astype(int)
@@ -138,66 +173,124 @@ def build_features(train_cleaned, test_clean):
             + df["AttachedGarageYN"].astype(int)
         )
 
-
     # --------------------------------------------------------
     # 5. DISTANCE TO COAST
     # --------------------------------------------------------
-    train_cleaned["DistToCoast_km"] = min_distance_to_coast(train_cleaned, COAST_POINTS)
-    test_clean["DistToCoast_km"] = min_distance_to_coast(test_clean, COAST_POINTS)
-
+    print("  - Coastal distance")
+    train["DistToCoast_km"] = min_distance_to_coast(train, COAST_POINTS)
+    test["DistToCoast_km"] = min_distance_to_coast(test, COAST_POINTS)
+    
+    # Create coastal proximity indicator
+    for df in [train, test]:
+        df["IsCoastal"] = (df["DistToCoast_km"] < 10).astype(int)  # Within 10km
 
     # --------------------------------------------------------
     # 6. KMEANS GEO CLUSTERS
     # --------------------------------------------------------
-    coords = full[["Latitude", "Longitude"]]
+    print("  - Geographic clustering")
+    # Combine for clustering (excluding target)
+    train_coords = train[["Latitude", "Longitude"]]
+    test_coords = test[["Latitude", "Longitude"]]
+    all_coords = pd.concat([train_coords, test_coords], ignore_index=True)
+    
     km = KMeans(n_clusters=20, random_state=42, n_init=10)
-    full["GeoCluster"] = km.fit_predict(coords)
-
-    train_cleaned["GeoCluster"] = full.loc[:len(train_cleaned)-1, "GeoCluster"].values
-    test_clean["GeoCluster"] = full.loc[len(train_cleaned):, "GeoCluster"].values
-
+    all_clusters = km.fit_predict(all_coords)
+    
+    train["GeoCluster"] = all_clusters[:len(train)]
+    test["GeoCluster"] = all_clusters[len(train):]
 
     # --------------------------------------------------------
-    # 7. TARGET ENCODING (No Leakage)
+    # 7. TARGET ENCODING (No Leakage via K-Fold)
     # --------------------------------------------------------
-    y = train_cleaned["ClosePrice"]
-
+    print("  - Target encoding (k-fold)")
+    y = train["ClosePrice"]
+    
     for col in ["City", "PostalCode", "CountyOrParish"]:
-        tr_enc, te_enc = kfold_target_encode(train_cleaned[col], y, test_clean[col])
-        train_cleaned[f"{col}_TE"] = tr_enc
-        test_clean[f"{col}_TE"] = te_enc
-
-
-    # --------------------------------------------------------
-    # 8. NEW — LOCAL PPSF BENCHMARKS (No Leakage)
-    # --------------------------------------------------------
-    train_cleaned["PPSF"] = train_cleaned["ClosePrice"] / train_cleaned["LivingArea"]
-
-    # Compute medians only using train
-    ppsf_zip = train_cleaned.groupby("PostalCode")["PPSF"].median()
-    ppsf_city = train_cleaned.groupby("City")["PPSF"].median()
-    ppsf_county = train_cleaned.groupby("CountyOrParish")["PPSF"].median()
-
-    for df in [train_cleaned, test_clean]:
-        df["ZIP_MedianPPSF"] = df["PostalCode"].map(ppsf_zip)
-        df["City_MedianPPSF"] = df["City"].map(ppsf_city)
-        df["County_MedianPPSF"] = df["CountyOrParish"].map(ppsf_county)
-
+        tr_enc, te_enc = kfold_target_encode(train[col], y, test[col])
+        train[f"{col}_TE"] = tr_enc
+        test[f"{col}_TE"] = te_enc
 
     # --------------------------------------------------------
-    # 9. NEW — MARKET VELOCITY SIGNALS (No Leakage)
+    # 8. LOCAL PRICE PER SQFT BENCHMARKS (No Leakage)
     # --------------------------------------------------------
-    # Using training data only to compute demand
-    train_cleaned["MonthStr"] = train_cleaned["CloseDate"].dt.to_period("M").astype(str)
+    print("  - Local pricing benchmarks")
+    # Calculate PPSF only on training data
+    train_ppsf = train["ClosePrice"] / train["LivingArea"]
+    
+    # Compute medians from training only
+    ppsf_zip = train_ppsf.groupby(train["PostalCode"]).median()
+    ppsf_city = train_ppsf.groupby(train["City"]).median()
+    ppsf_county = train_ppsf.groupby(train["CountyOrParish"]).median()
+    
+    # Apply to both train and test
+    for df in [train, test]:
+        df["ZIP_MedianPPSF"] = df["PostalCode"].map(ppsf_zip).fillna(ppsf_city.median())
+        df["City_MedianPPSF"] = df["City"].map(ppsf_city).fillna(ppsf_city.median())
+        df["County_MedianPPSF"] = df["CountyOrParish"].map(ppsf_county).fillna(ppsf_county.median())
 
-    sales_count = train_cleaned.groupby(["PostalCode", "MonthStr"]).size().rename("SalesCount")
-    median_dom = train_cleaned.groupby(["PostalCode", "MonthStr"])["DaysOnMarket"].median().rename("MedianDOM")
-
-    for df in [train_cleaned, test_clean]:
+    # --------------------------------------------------------
+    # 9. MARKET VELOCITY SIGNALS (No Leakage)
+    # --------------------------------------------------------
+    print("  - Market velocity indicators")
+    # Create month string for aggregation
+    train["MonthStr"] = train["CloseDate"].dt.to_period("M").astype(str)
+    
+    # Calculate from training data only
+    sales_count = train.groupby(["PostalCode", "MonthStr"]).size()
+    median_dom = train.groupby(["PostalCode", "MonthStr"])["DaysOnMarket"].median()
+    
+    # Apply to both datasets
+    for df in [train, test]:
         df["MonthStr"] = df["CloseDate"].dt.to_period("M").astype(str)
+        
+        # Map sales count
+        df["ZIP_SalesCount"] = df.apply(
+            lambda row: sales_count.get((row["PostalCode"], row["MonthStr"]), 0), 
+            axis=1
+        )
+        
+        # Map median days on market
+        df["ZIP_MedianDOM"] = df.apply(
+            lambda row: median_dom.get((row["PostalCode"], row["MonthStr"]), median_dom.median()), 
+            axis=1
+        )
 
-        df["ZIP_SalesCount"] = df.set_index(["PostalCode", "MonthStr"]).index.map(sales_count).fillna(0)
-        df["ZIP_MedianDOM"] = df.set_index(["PostalCode", "MonthStr"]).index.map(median_dom).fillna(median_dom.median())
+    # --------------------------------------------------------
+    # 10. CLEANUP - Drop columns that shouldn't be features
+    # --------------------------------------------------------
+    print("  - Cleanup")
+    
+    # Drop raw categorical columns (we have target-encoded versions)
+    columns_to_drop = [
+        "City", "PostalCode", "CountyOrParish",  # Have _TE versions
+        "MonthStr",  # Temporary helper column
+        "CloseDate", "ListingContractDate", "PurchaseContractDate",  # Date columns
+        "ContractStatusChangeDate"  # If it exists
+    ]
+    
+    # Only drop columns that exist
+    train = train.drop(columns=[col for col in columns_to_drop if col in train.columns])
+    test = test.drop(columns=[col for col in columns_to_drop if col in test.columns])
+    
+    print(f"✓ Feature engineering complete")
+    print(f"  Train: {train.shape}")
+    print(f"  Test:  {test.shape}")
+    
+    # Verify no categorical columns remain (except ClosePrice)
+    train_cats = train.select_dtypes(include=['object', 'category']).columns.tolist()
+    test_cats = test.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    if train_cats:
+        print(f"  ⚠️  Warning: Categorical columns in train: {train_cats}")
+    if test_cats:
+        print(f"  ⚠️  Warning: Categorical columns in test: {test_cats}")
+    
+    return train, test
 
 
-    return train_cleaned, test_clean
+if __name__ == "__main__":
+    # Test the function
+    print("Feature engineering module loaded successfully!")
+    print("\nUsage:")
+    print("  from feature_engineering import build_features")
+    print("  train_fe, test_fe = build_features(train_raw, test_raw)")
