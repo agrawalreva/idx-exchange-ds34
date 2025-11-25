@@ -8,7 +8,7 @@ import joblib
 import warnings
 import sys
 warnings.filterwarnings('ignore')
-
+from sklearn.preprocessing import LabelEncoder
 # Import your feature engineering module
 try:
     from feature_engineering import build_features
