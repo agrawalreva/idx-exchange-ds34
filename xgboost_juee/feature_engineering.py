@@ -94,6 +94,7 @@ def build_features(train_cleaned, test_cleaned):
     # Work on copies to avoid modifying originals
     train = train_cleaned.copy()
     test = test_cleaned.copy()
+
     
     print("Building features...")
     
