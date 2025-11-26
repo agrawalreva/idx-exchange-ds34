@@ -91,7 +91,7 @@ def adaptive_clean_real_estate_data(
         'BuyerAgentLastName', 'BuyerAgentMlsId', 'ListOfficeName',
         'BuyerOfficeName', 'SubdivisionName', 'Levels', 'Flooring',
         'MLSAreaMajor', 'StreetNumberNumeric', 'MainLevelBedrooms',
-        'StateOrProvince', 'PropertyType', 'PropertySubType', 'SourceFile', 'CoListOfficeName'
+        'StateOrProvince', 'PropertyType', 'PropertySubType', 'CoListOfficeName'
     ]
     cols_to_drop = [c for c in columns_to_exclude if c in df.columns]
     df = df.drop(columns=cols_to_drop)
@@ -364,3 +364,80 @@ def adaptive_clean_real_estate_data(
     else:
         return df, None, None
 
+
+
+
+def simple_clean_real_estate_data(df, testing = False):
+    """
+    Simple cleaning of real estate data without adaptive imputation.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Raw real estate dataset
+    testing : bool, default=False
+        If True, indicates test dataset (for potential outlier trimming)
+        
+    Returns:
+    --------
+    df_clean : pd.DataFrame
+        Cleaned dataset
+    """
+    
+    df = df.copy()
+    
+    # Drop high-missing columns
+    threshold = 0.75
+    cols_to_drop = df.columns[df.isna().mean() > threshold].tolist()
+    df = df.drop(columns=cols_to_drop)
+    
+    # Apply required filters
+    if 'StateOrProvince' in df.columns:
+        df = df[df['StateOrProvince'] == 'CA']
+    if 'PropertyType' in df.columns:
+        df = df[df['PropertyType'] == 'Residential']
+    if 'PropertySubType' in df.columns:
+        df = df[df['PropertySubType'] == 'SingleFamilyResidence']
+    
+    # Drop zero-variance and excluded columns
+    zero_variance_cols = df.columns[df.nunique() <= 1].tolist()
+    df = df.drop(columns=zero_variance_cols)
+    
+    columns_to_exclude = [
+        'ListingKey', 'ListingKeyNumeric', 'ListingId', 'UnparsedAddress',
+        'ListPrice', 'OriginalListPrice', 'DaysOnMarket', 'AssociationFee',
+        'AssociationFeeFrequency', 'HighSchoolDistrict', 'BuyerAgentAOR',
+        'ListAgentAOR', 'BuyerOfficeAOR', 'ListAgentEmail', 'ListAgentFirstName',
+        'ListAgentLastName', 'ListAgentFullName', 'BuyerAgentFirstName',
+        'BuyerAgentLastName', 'BuyerAgentMlsId', 'ListOfficeName',
+        'BuyerOfficeName', 'SubdivisionName', 'Levels', 'Flooring',
+        'MLSAreaMajor', 'StreetNumberNumeric', 'MainLevelBedrooms',
+        'StateOrProvince', 'PropertyType', 'PropertySubType', 'CoListOfficeName'
+    ]
+    cols_to_drop = [c for c in columns_to_exclude if c in df.columns]
+    df = df.drop(columns=cols_to_drop)
+
+    
+    # Handle ClosePrice
+    if 'ClosePrice' in df.columns:
+        df = df.dropna(subset=['ClosePrice'])
+    if testing and 'ClosePrice' in df.columns:
+        close_price_bottom = df['ClosePrice'].quantile(0.005)
+        close_price_top = df['ClosePrice'].quantile(0.995)
+        df = df[(df['ClosePrice'] >= close_price_bottom) & (df['ClosePrice'] <= close_price_top)]
+    
+    # Convert dates
+    date_columns = ['PurchaseContractDate', 'ListingContractDate',
+                   'ContractStatusChangeDate', 'CloseDate']
+    date_columns = [c for c in date_columns if c in df.columns]
+    for col in date_columns:
+        df[col] = pd.to_datetime(df[col], errors='coerce')
+    
+    #Boolean columns
+    boolean_columns = [col for col in df.columns if col.endswith('YN')]
+    boolean_map = {'False': 0, 'True': 1}
+    for col in boolean_columns:
+        df[col] = df[col].map(boolean_map)
+        df[col] = df[col].fillna(0).astype(int)
+    
+    return df
